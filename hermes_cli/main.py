@@ -63,6 +63,7 @@ except ModuleNotFoundError:
 
 import os
 import sys
+from pathlib import Path
 
 
 def _exit_after_oneshot(rc: object) -> None:
@@ -363,8 +364,10 @@ def _read_openai_version_fast() -> str | None:
 def _print_fast_version_info() -> None:
     from hermes_cli import __release_date__, __version__
 
+    project_root = Path(__file__).resolve().parent.parent
+
     print(f"Hermes Agent v{__version__} ({__release_date__})")
-    print(f"Install directory: {PROJECT_ROOT}")
+    print(f"Install directory: {project_root}")
 
     print(f"Python: {sys.version.split()[0]}")
 
