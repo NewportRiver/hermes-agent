@@ -257,6 +257,27 @@ scripts/run_tests.sh
 
 ---
 
+## Release Traceability Addendum
+
+Date: 2026-08-14
+Local repo branch: `main`
+Local commit: `b146ea41f`
+Upstream comparison base: `86fb04638`
+Hermes version: `0.19.0`
+Hermes release date: `2026.7.20`
+Observed file mtimes (UTC):
+- `hermes_cli/main.py`: 2026-07-22T11:51:26.436519+00:00
+- `README.md`: 2026-07-22T10:49:31.329443+00:00
+
+Update summary:
+- `hermes_cli/main.py`: resolved the install-directory output from the live file path so version output stays accurate after moves and update workflows.
+- `CHANGELOG.md`: added a dated entry that records the local maintenance update, the diff base, and the code/file metadata used for traceability.
+- `README.md`: appended this addendum for future maintenance provenance and update auditability.
+
+Verification reference:
+- `git diff 86fb04638..b146ea41f -- hermes_cli/main.py README.md`
+- `git show --stat --summary --patch --unified=3 86fb04638..b146ea41f -- hermes_cli/main.py`
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
