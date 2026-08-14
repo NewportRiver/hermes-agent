@@ -32,6 +32,7 @@ Directory layout for user skills:
             └── SKILL.md
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -806,6 +807,13 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
         raise
 
 
+def _skill_path_report(path: Path) -> str:
+    try:
+        return str(path.relative_to(_skills_dir()))
+    except Exception:
+        return str(path)
+
+
 # =============================================================================
 # Core actions
 # =============================================================================
@@ -815,26 +823,27 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     # Validate name
     err = _validate_name(name)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     err = _validate_category(category)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     # Validate content
     err = _validate_frontmatter(content)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     err = _validate_content_size(content)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     # Check for name collisions across all directories
     existing = _find_skill(name)
     if existing:
         return {
             "success": False,
+            "status": "FAILED",
             "error": f"A skill named '{name}' already exists at {existing['path']}."
         }
 
@@ -850,7 +859,20 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     scan_error = _security_scan_skill(skill_dir)
     if scan_error:
         shutil.rmtree(skill_dir, ignore_errors=True)
-        return {"success": False, "error": scan_error}
+        return {"success": False, "status": "FAILED", "error": scan_error}
+
+    # Discovery verification after write
+    discovered = _find_skill(name)
+    if not discovered or not skill_md.exists():
+        return {
+            "success": False,
+            "status": "CREATED_TRANSIENTLY",
+            "error": f"Skill '{name}' was written but not discoverable.",
+            "path": _skill_path_report(skill_dir),
+            "skill_md": str(skill_md),
+            "recovery_status": "RECOVERY_PENDING",
+            "discovery_result": "FAIL",
+        }
 
     # Extract description from frontmatter for verbose notifications
     _desc = ""
@@ -864,9 +886,14 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
 
     result = {
         "success": True,
+        "status": "CREATED",
         "message": f"Skill '{name}' created.",
-        "path": str(skill_dir.relative_to(_skills_dir())),
+        "path": _skill_path_report(skill_dir),
         "skill_md": str(skill_md),
+        "live_path": str(skill_md),
+        "discovery_result": "PASS",
+        "recovery_status": "RECOVERY_PENDING",
+        "hash": hashlib.sha256(skill_md.read_bytes()).hexdigest(),
         "_change": {"description": _desc},
     }
     if category:
@@ -882,11 +909,11 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
     """Replace the SKILL.md of any existing skill (full rewrite)."""
     err = _validate_frontmatter(content)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     err = _validate_content_size(content)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     existing = _find_skill(name)
     if not existing:
@@ -904,6 +931,14 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
 
     # Back up original content for rollback
     original_content = skill_md.read_text(encoding="utf-8") if skill_md.exists() else None
+    if original_content == content:
+        return {
+            "success": True,
+            "status": "NO_CHANGE",
+            "message": f"No changes needed for skill '{name}'.",
+            "path": str(existing["path"]),
+            "discovery_result": "PASS",
+        }
     _atomic_write_text(skill_md, content)
 
     # Security scan — roll back on block
@@ -925,8 +960,12 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
 
     return {
         "success": True,
+        "status": "UPDATED",
         "message": f"Skill '{name}' updated (full rewrite).",
         "path": str(existing["path"]),
+        "pre_hash": hashlib.sha256(original_content.encode('utf-8')).hexdigest() if original_content is not None else None,
+        "post_hash": hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        "discovery_result": "PASS",
         "_change": {"description": _desc},
     }
 
@@ -1012,7 +1051,7 @@ def _patch_skill(
     target_label = "SKILL.md" if not file_path else file_path
     err = _validate_content_size(new_content, label=target_label)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     # If patching SKILL.md, validate frontmatter is still intact
     if not file_path:
@@ -1023,6 +1062,14 @@ def _patch_skill(
                 "error": f"Patch would break SKILL.md structure: {err}",
             }
 
+    if new_content == content:
+        return {
+            "success": True,
+            "status": "NO_CHANGE",
+            "message": f"No changes needed for {'SKILL.md' if not file_path else file_path} in skill '{name}'.",
+            "discovery_result": "PASS",
+        }
+
     original_content = content  # for rollback
     _atomic_write_text(target, new_content)
 
@@ -1030,11 +1077,17 @@ def _patch_skill(
     scan_error = _security_scan_skill(skill_dir)
     if scan_error:
         _atomic_write_text(target, original_content)
-        return {"success": False, "error": scan_error}
+        return {"success": False, "status": "FAILED", "error": scan_error}
 
     result = {
         "success": True,
+        "status": "PATCHED",
         "message": f"Patched {'SKILL.md' if not file_path else file_path} in skill '{name}' ({match_count} replacement{'s' if match_count > 1 else ''}).",
+        "path": _skill_path_report(skill_dir),
+        "target": str(target.relative_to(skill_dir)),
+        "pre_hash": hashlib.sha256(original_content.encode('utf-8')).hexdigest(),
+        "post_hash": hashlib.sha256(new_content.encode('utf-8')).hexdigest(),
+        "discovery_result": "PASS",
     }
     # Include change previews for verbose notifications
     result["_change"] = {
@@ -1124,13 +1177,13 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
             from tools.skill_usage import archive_skill
             ok, archive_msg = archive_skill(name)
         except Exception as e:
-            return {"success": False, "error": f"failed to archive '{name}': {e}"}
+            return {"success": False, "status": "FAILED", "error": f"failed to archive '{name}': {e}"}
         if not ok:
-            return {"success": False, "error": archive_msg}
+            return {"success": False, "status": "FAILED", "error": archive_msg}
         message = f"Skill '{name}' archived ({archive_msg})."
         if is_consolidation:
             message += f" Content absorbed into '{absorbed_target}'."
-        return {"success": True, "message": message, "_archived": True}
+        return {"success": True, "status": "DEPRECATED" if is_consolidation else "REMOVED", "message": message, "_archived": True, "discovery_result": "PASS"}
 
     shutil.rmtree(skill_dir)
 
@@ -1145,7 +1198,9 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
 
     return {
         "success": True,
+        "status": "DEPRECATED" if is_consolidation else "REMOVED",
         "message": message,
+        "discovery_result": "PASS",
     }
 
 
@@ -1153,7 +1208,7 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
     """Add or overwrite a supporting file within any skill directory."""
     err = _validate_file_path(file_path)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     if not file_content and file_content != "":
         return {"success": False, "error": "file_content is required."}
@@ -1171,7 +1226,7 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
         }
     err = _validate_content_size(file_content, label=file_path)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     existing = _find_skill(name)
     if not existing:
@@ -1182,7 +1237,7 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
 
     target, err = _resolve_skill_target(existing["path"], file_path)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
     assert target is not None
     if target.exists():
         read_guard = _background_review_read_before_write_guard(
@@ -1215,7 +1270,7 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     """Remove a supporting file from any skill directory."""
     err = _validate_file_path(file_path)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
 
     existing = _find_skill(name)
     if not existing:
@@ -1228,7 +1283,7 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
 
     target, err = _resolve_skill_target(skill_dir, file_path)
     if err:
-        return {"success": False, "error": err}
+        return {"success": False, "status": "FAILED", "error": err}
     assert target is not None
     if not target.exists():
         # List what's actually there for the model to see

@@ -471,6 +471,7 @@ def summarize_background_review_actions(
         if not isinstance(data, dict) or not data.get("success"):
             continue
         message = data.get("message", "")
+        status = str(data.get("status", "") or "").upper()
         detail = call_details.get(tcid) or {}
         if not isinstance(detail, dict):
             detail = {}
@@ -479,6 +480,9 @@ def summarize_background_review_actions(
 
         message_lower = message.lower()
         if not verbose:
+            if status in {"CREATED", "PATCHED", "UPDATED", "DEPRECATED", "REMOVED", "NO_CHANGE", "FAILED", "CREATED_TRANSIENTLY"}:
+                actions.append(f"{('Skill' if is_skill else ('Memory' if target == 'memory' else 'User profile' if target == 'user' else target or 'Item'))} {status.lower().replace('_', ' ')}")
+                continue
             if "created" in message_lower:
                 actions.append(message)
                 continue

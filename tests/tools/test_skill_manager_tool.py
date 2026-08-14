@@ -208,7 +208,17 @@ class TestCreateSkill:
         with _skill_dir(tmp_path):
             result = _create_skill("my-skill", VALID_SKILL_CONTENT)
         assert result["success"] is True
+        assert result["status"] == "CREATED"
+        assert result["discovery_result"] == "PASS"
         assert (tmp_path / "my-skill" / "SKILL.md").exists()
+
+    def test_create_not_discoverable_is_not_reported_as_created(self, tmp_path, monkeypatch):
+        with _skill_dir(tmp_path):
+            monkeypatch.setattr("tools.skill_manager_tool._find_skill", lambda name: None)
+            result = _create_skill("my-skill", VALID_SKILL_CONTENT)
+        assert result["success"] is False
+        assert result["status"] == "CREATED_TRANSIENTLY"
+        assert result["discovery_result"] == "FAIL"
 
     def test_create_with_category(self, tmp_path):
         with _skill_dir(tmp_path):
@@ -266,8 +276,16 @@ class TestEditSkill:
             _create_skill("my-skill", VALID_SKILL_CONTENT)
             result = _edit_skill("my-skill", VALID_SKILL_CONTENT_2)
         assert result["success"] is True
+        assert result["status"] == "UPDATED"
         content = (tmp_path / "my-skill" / "SKILL.md").read_text()
         assert "Updated description" in content
+
+    def test_edit_no_change_reports_no_change(self, tmp_path):
+        with _skill_dir(tmp_path):
+            _create_skill("my-skill", VALID_SKILL_CONTENT)
+            result = _edit_skill("my-skill", VALID_SKILL_CONTENT)
+        assert result["success"] is True
+        assert result["status"] == "NO_CHANGE"
 
     def test_edit_nonexistent_skill(self, tmp_path):
         with _skill_dir(tmp_path):
@@ -291,6 +309,7 @@ class TestPatchSkill:
             _create_skill("my-skill", VALID_SKILL_CONTENT)
             result = _patch_skill("my-skill", "Do the thing.", "Do the new thing.")
         assert result["success"] is True
+        assert result["status"] == "PATCHED"
         content = (tmp_path / "my-skill" / "SKILL.md").read_text()
         assert "Do the new thing." in content
 
