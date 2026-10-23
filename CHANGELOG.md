@@ -1,5 +1,22 @@
 # Hermes Agent Changelog
 
+## 2026-10-23 — require human approval for agent reboot commands
+
+Metadata:
+- repo branch: `update-traceability-20260814`
+- implementation commit: `90dce2ef2`
+- environment: Android 16 / Termux
+
+Change:
+- Reboot and shutdown commands now require an explicit interactive human approval.
+- `--yolo`, `/yolo`, approval mode overrides, cached approvals, and cron approval mode cannot bypass this requirement.
+- Noninteractive contexts fail closed; destructive hardline commands remain unconditionally blocked.
+
+Verification:
+- `python -m py_compile tools/approval.py`
+- Direct command checks confirmed `reboot` blocks without a human, `echo reboot` remains allowed, and `rm -rf /` remains hardline-blocked.
+- Targeted pytest collection was blocked because `python-dotenv` is not installed in this checkout.
+
 ## 2026-08-14 — local maintenance update
 
 Metadata:

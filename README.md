@@ -278,6 +278,25 @@ Verification reference:
 - `git diff 86fb04638..b146ea41f -- hermes_cli/main.py README.md`
 - `git show --stat --summary --patch --unified=3 86fb04638..b146ea41f -- hermes_cli/main.py`
 
+## Safety Traceability Addendum — Interactive Reboot Approval
+
+Date: 2026-10-23
+Implementation commit: `90dce2ef2`
+Environment: Android 16 / Termux
+
+Hermes treats host reboot and shutdown commands as high-impact operations. They
+are no longer unconditionally rejected when issued through the local terminal,
+but they require an explicit interactive human approval each time. `--yolo`,
+`/yolo`, approval-mode overrides, cached approvals, and unattended cron contexts
+cannot authorize them. Other irreversible hardline commands remain blocked.
+
+Verification:
+- `reboot` requires human approval and fails closed without an interactive user.
+- `echo reboot` is not treated as a reboot command.
+- `rm -rf /` remains unconditionally blocked.
+- Full targeted pytest execution remains pending because this checkout lacks
+  the `python-dotenv` dependency.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
