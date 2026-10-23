@@ -2651,6 +2651,7 @@ def _run_approval_gate(
     autoapprove_log_prefix: str,
     fail_closed_when_no_human: bool = False,
     no_human_block_message: str = "",
+    force_human: bool = False,
 ) -> dict:
     """Shared human-approval gate for a flagged action (command or tool).
 
@@ -2694,12 +2695,13 @@ def _run_approval_gate(
     """
     # --yolo bypasses all approval prompts (session- or process-scoped).
     # Hardline blocks are handled by the caller BEFORE this gate, so yolo
-    # here only skips the recoverable approval layer.
-    if _YOLO_MODE_FROZEN or is_current_session_yolo_enabled():
+    # here only skips the recoverable approval layer. Forced-human actions
+    # (currently reboot/shutdown) bypass neither yolo nor cached approvals.
+    if not force_human and (_YOLO_MODE_FROZEN or is_current_session_yolo_enabled()):
         return {"approved": True, "message": None}
 
     session_key = get_current_session_key()
-    if is_approved(session_key, pattern_key):
+    if not force_human and is_approved(session_key, pattern_key):
         return {"approved": True, "message": None}
 
     if approval_callback is None:
@@ -2711,6 +2713,17 @@ def _run_approval_gate(
 
     is_cli = _is_interactive_cli()
     is_gateway = _is_gateway_approval_context()
+
+    if force_human and not is_cli and not is_gateway:
+        return {
+            "approved": False,
+            "message": (
+                f"BLOCKED: explicit human approval required ({description}), "
+                "but no interactive user or gateway is present."
+            ),
+            "pattern_key": pattern_key,
+            "description": description,
+        }
 
     if not is_cli and not is_gateway:
         # Cron sessions: respect cron_mode config
@@ -2808,9 +2821,9 @@ def _run_approval_gate(
                     "user_consent": False,
                 }
 
-            if choice == "session":
+            if not force_human and choice == "session":
                 approve_session(session_key, pattern_key)
-            elif choice == "always":
+            elif not force_human and choice == "always":
                 approve_session(session_key, pattern_key)
                 approve_permanent(pattern_key)
                 save_permanent_allowlist(_permanent_approved)
@@ -2850,9 +2863,9 @@ def _run_approval_gate(
             "description": description,
         }
 
-    if choice == "session":
+    if not force_human and choice == "session":
         approve_session(session_key, pattern_key)
-    elif choice == "always":
+    elif not force_human and choice == "always":
         approve_session(session_key, pattern_key)
         approve_permanent(pattern_key)
         save_permanent_allowlist(_permanent_approved)
@@ -2902,6 +2915,16 @@ def check_dangerous_command(command: str, env_type: str,
     # to wipe the disk or power the box off.
     is_hardline, hardline_desc = detect_hardline_command(command)
     if is_hardline:
+        if hardline_desc == "system shutdown/reboot":
+            return _run_approval_gate(
+                pattern_key="hardline.system_shutdown_reboot",
+                description=hardline_desc,
+                display_target=command,
+                approval_callback=approval_callback,
+                cron_deny_message="BLOCKED: reboot/shutdown requires interactive human approval.",
+                autoapprove_log_prefix="Hardline reboot approval",
+                force_human=True,
+            )
         logger.warning("Hardline block: %s (command: %s)", hardline_desc, command[:200])
         return _hardline_block_result(hardline_desc)
 
