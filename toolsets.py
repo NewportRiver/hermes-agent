@@ -107,6 +107,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "gmail_readonly": {
+        "description": "Bounded read-only Gmail search and message retrieval",
+        "tools": [],
+        "includes": []
+    },
+
     "x_search": {
         "description": (
             "Search X (Twitter) posts and threads via xAI's built-in "

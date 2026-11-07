@@ -26,6 +26,7 @@ TOKEN_FILE = pathlib.Path(os.environ.get("HERMES_GMAIL_TOKEN_FILE", str(GMAIL_HO
 TIMEOUT = 15
 MAX_BYTES = 512_000
 MAX_RESULTS = 25
+READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
 
 def _json(path: pathlib.Path) -> dict[str, Any]:
@@ -48,13 +49,19 @@ def _client_id_secret() -> tuple[str, str]:
 
 def _access_token() -> str:
     data = _json(TOKEN_FILE)
+    granted = set(str(data.get("scope", "")).split())
+    granted.update(str(scope) for scope in data.get("scopes", []) if isinstance(data.get("scopes"), list))
+    if granted != {"https://www.googleapis.com/auth/gmail.readonly"}:
+        raise RuntimeError("Gmail token does not contain exactly the approved readonly scope")
     token = data.get("token") or data.get("access_token")
     expiry = data.get("expiry") or data.get("expires_at")
+    if not expiry and data.get("created_at") and data.get("expires_in"):
+        expiry = float(data["created_at"]) + float(data["expires_in"])
     if token and (not expiry or float(expiry) > time.time() + 30):
         return str(token)
     refresh = data.get("refresh_token")
     if not refresh:
-        raise RuntimeError("Gmail OAuth authorization is incomplete; owner consent is required")
+        raise RuntimeError("Gmail OAuth authorization is incomplete or expired; owner consent is required")
     if data.get("token_uri", TOKEN_URI) != TOKEN_URI:
         raise RuntimeError("Gmail token endpoint is not the approved Google OAuth endpoint")
     client_id, client_secret = _client_id_secret()
@@ -65,7 +72,7 @@ def _access_token() -> str:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             raw = response.read(MAX_BYTES + 1)
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-        raise RuntimeError("Gmail token refresh failed") from exc
+        raise RuntimeError("Gmail token refresh failed; authorization may be expired or revoked") from exc
     if len(raw) > MAX_BYTES:
         raise RuntimeError("Gmail token response exceeded bounded size")
     refreshed = json.loads(raw.decode("utf-8"))
@@ -75,6 +82,7 @@ def _access_token() -> str:
     data.update(refreshed)
     data["token"] = access
     data["expiry"] = time.time() + float(refreshed.get("expires_in", 3600))
+    data["scope"] = "https://www.googleapis.com/auth/gmail.readonly"
     TOKEN_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     TOKEN_FILE.chmod(0o600)
     return str(access)
@@ -136,13 +144,6 @@ def gmail_get(message_id: str, **_: Any) -> str:
     return json.dumps({"id": message.get("id"), "threadId": message.get("threadId"), "from": headers.get("from", ""), "to": headers.get("to", ""), "subject": headers.get("subject", ""), "date": headers.get("date", ""), "labels": message.get("labelIds", []), "body": _body(message)}, ensure_ascii=True)
 
 
-def _register(name: str, description: str, properties: dict[str, Any], handler: Any) -> None:
-    registry.register(name=name, toolset="gmail_readonly", schema={"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": list(properties)}}, handler=lambda args, **kw: handler(**args, **kw), check_fn=lambda: CLIENT_FILE.exists() and TOKEN_FILE.exists(), max_result_size_chars=MAX_BYTES)
-
-
-_register("gmail_search_readonly", "Search Gmail and return bounded metadata only; never sends or modifies mail.", {"query": {"type": "string", "maxLength": 500}, "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS}}, gmail_search)
-_register("gmail_get_readonly", "Read one Gmail message body; never sends or modifies mail.", {"message_id": {"type": "string", "minLength": 1, "maxLength": 200}}, gmail_get)
-
-# Explicit registrations are required by Hermes AST-based builtin discovery.
+# Explicit top-level registrations are required by Hermes AST-based discovery.
 registry.register(name="gmail_search_readonly", toolset="gmail_readonly", schema={"name":"gmail_search_readonly","description":"Search Gmail and return bounded metadata only; never sends or modifies mail.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":500},"max_results":{"type":"integer","minimum":1,"maximum":MAX_RESULTS}},"required":["query","max_results"]}}, handler=lambda args, **kw: gmail_search(**args, **kw), check_fn=lambda: CLIENT_FILE.exists() and TOKEN_FILE.exists(), max_result_size_chars=MAX_BYTES)
 registry.register(name="gmail_get_readonly", toolset="gmail_readonly", schema={"name":"gmail_get_readonly","description":"Read one Gmail message body; never sends or modifies mail.","parameters":{"type":"object","properties":{"message_id":{"type":"string","minLength":1,"maxLength":200}},"required":["message_id"]}}, handler=lambda args, **kw: gmail_get(**args, **kw), check_fn=lambda: CLIENT_FILE.exists() and TOKEN_FILE.exists(), max_result_size_chars=MAX_BYTES)
