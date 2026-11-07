@@ -87,7 +87,8 @@ The connector is intentionally small and stdlib-only:
   `tools/gmail_oauth_init.py`: installed-app PKCE, random state validation,
   temporary `127.0.0.1` callback, exact-scope validation, and account
   verification for the owner-approved Gmail identity.
-- Allows token refresh only through `https://oauth2.googleapis.com/token`.
+- Refreshes expired access tokens through the approved Google OAuth endpoint and persists refreshed metadata with mode `0600`.
+- Rejects missing, malformed, revoked, or unexpected-scope tokens without attempting Gmail access.
 - Uses HTTPS, a 15-second timeout, and a 512 KiB response limit.
 - Rejects non-Gmail API paths.
 - Bounds search queries and result counts.
